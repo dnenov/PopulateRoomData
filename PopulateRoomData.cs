@@ -184,18 +184,23 @@ namespace DynamoAecom
         {
 
         }
-        public static List<List<IList<DS.Geometry>>> Intersect([DefaultArgument("{}")] IList elementGeometries,
-            [DefaultArgument("{}")] IList<string> elements,
+        [MultiReturn(new[] { "views", "points", "elements" })]
+        public static Dictionary<string, object> Intersect([DefaultArgument("{}")] IList elementGeometries,
+            [DefaultArgument("{}")] IList<string> elementsNames,
+            [DefaultArgument("{}")] IList<string> elementsText,
             [DefaultArgument("{}")] IList<DS.Solid> viewGeometries,
-            [DefaultArgument("{}")] IList<string> viewNames
+            [DefaultArgument("{}")] IList<string> viewNames,
+            [DefaultArgument("{}")] IList viewSheets
             )
         {
             int numElements = elementGeometries.Count;
             int numSections = viewGeometries.Count;
 
-            List<List<IList<DS.Geometry>>> result = new List<List<IList<DS.Geometry>>>();
+            List<object> vNames = new List<object>();
+            List<DS.Point> points = new List<DS.Point>();
+            List<string> eNames = new List<string>();
 
-            if (numElements != elements.Count || numSections != viewNames.Count)
+            if (numElements != elementsNames.Count || numSections != viewNames.Count)
             {
                 TaskDialog.Show("Error", "Make sure you are passing matching lists.");
                 return null;
@@ -209,8 +214,7 @@ namespace DynamoAecom
                 for(int i = 0;  i < numSections; i++)
                 {
                     string viewName = viewNames[i];
-                    DS.Solid viewSolid = viewGeometries[i];
-                    List<IList<DS.Geometry>> viewList = new List<IList<DS.Geometry>>();                    
+                    DS.Solid viewSolid = viewGeometries[i];                 
 
                     // FOR EACH ELEMENT
                     for (int j = 0; j < numElements; j++)
@@ -223,19 +227,17 @@ namespace DynamoAecom
                         // 1 - check if the solid is not null
                         if (viewSolid == null)
                         {
-                            viewList.Add(new List<DS.Geometry>());
                             continue;
                         }
                         bool test = false;
                         // 2 - check if element is in the room at all
-                        if (elements[j] != null && elements[j].Contains(viewName))
+                        if (elementsNames[j] != null && elementsNames[j].Contains(viewName))
                         {
                             test = true;
                         }
 
                         if (!test)
                         {
-                            viewList.Add(new List<DS.Geometry>());
                             continue;
                         }
 
@@ -243,25 +245,43 @@ namespace DynamoAecom
                         // 3 - check if the cuboid is not null
                         if (elementCube == null)
                         {
-                            viewList.Add(new List<DS.Geometry>());
                             continue;
                         }
 
                         IList<DS.Geometry> geometry = viewSolid.Intersect(elementCube);
 
-                        //if (geometry.Count > 0)
-                        //{
-                        //    viewList.Add(geometry);
-                        //}
-                        viewList.Add(geometry);
+                        if (geometry.Count > 0)
+                        {
+                            vNames.Add(viewSheets[i]);
+                            points.Add(GetPoint(geometry));
+                            eNames.Add(elementsText[j]);
+                        }
                     }
-                    result.Add(viewList);
                 }
                 
                 RevitServices.Transactions.TransactionManager.Instance.TransactionTaskDone();
             }
             
-            return result;            
+            return new Dictionary<string, object>
+                {
+                    { "views", vNames },
+                    { "points", points },
+                    { "elements", eNames }
+                };
+        }
+
+        private static DS.Point GetPoint(IList<DS.Geometry> geometry)
+        {
+            if(geometry[0].ToString().Contains("Line"))
+            {
+                DS.Curve curve = geometry[0] as DS.Curve;
+                return curve.PointAtParameter(0.5);
+            }
+            else
+            {
+                DS.Solid solid = geometry[0] as DS.Solid;
+                return solid.Centroid();
+            }
         }
     }
 }
