@@ -184,8 +184,8 @@ namespace DynamoAecom
         {
 
         }
-        public static List<List<IList<DS.Geometry>>> Intersect([DefaultArgument("{}")] IList<DS.Cuboid> elementGeometries,
-            [DefaultArgument("{}")] IList<Proto.Element> elements,
+        public static List<List<IList<DS.Geometry>>> Intersect([DefaultArgument("{}")] IList elementGeometries,
+            [DefaultArgument("{}")] IList<string> elements,
             [DefaultArgument("{}")] IList<DS.Solid> viewGeometries,
             [DefaultArgument("{}")] IList<string> viewNames
             )
@@ -195,59 +195,72 @@ namespace DynamoAecom
 
             List<List<IList<DS.Geometry>>> result = new List<List<IList<DS.Geometry>>>();
 
+            if (numElements != elements.Count || numSections != viewNames.Count)
+            {
+                TaskDialog.Show("Error", "Make sure you are passing matching lists.");
+                return null;
+            }
             
-            //if(numElements != elements.Count || numSections != viewNames.Count)
-            //{
-            //    TaskDialog.Show("Error", "Make sure you are passing matching lists.");
-            //    return null;
-            //}
-            
-
             using (AdnRme.ProgressForm form = new AdnRme.ProgressForm("Find elements on Views.", "Processing {0} out of " + (numElements * numSections).ToString() + " elements", (numElements * numSections)))
             {
                 RevitServices.Transactions.TransactionManager.Instance.EnsureInTransaction(DocumentManager.Instance.CurrentUIDocument.Document);
 
+                // FOR EACH VIEW
                 for(int i = 0;  i < numSections; i++)
                 {
                     string viewName = viewNames[i];
                     DS.Solid viewSolid = viewGeometries[i];
-                    List<IList<DS.Geometry>> viewList = new List<IList<DS.Geometry>>();
+                    List<IList<DS.Geometry>> viewList = new List<IList<DS.Geometry>>();                    
 
-                    if (viewSolid == null)
-                    {
-                        continue;
-                    }
-
+                    // FOR EACH ELEMENT
                     for (int j = 0; j < numElements; j++)
                     {
-                        Element element = elements[j].InternalElement;
-
-                        string comment = element.LookupParameter("Comments").AsString();
-                        string[] split = comment.Split(new string[] { ", " }, StringSplitOptions.None);
-
-                        for (int s = 0; s < split.Length; s++)
+                        form.Increment();
+                        if (form.getAbortFlag())
                         {
-                            if (split[s].Contains(viewName))
-                            {
-                                continue;
-                            }
+                            return null;
                         }
-
-                        DS.Cuboid elementCube = elementGeometries[j];
-
-                        if (elementCube == null)
+                        // 1 - check if the solid is not null
+                        if (viewSolid == null)
                         {
+                            viewList.Add(new List<DS.Geometry>());
                             continue;
                         }
-                        viewList.Add(viewSolid.Intersect(elementCube));
-                        form.Increment();                        
+                        bool test = false;
+                        // 2 - check if element is in the room at all
+                        if (elements[j] != null && elements[j].Contains(viewName))
+                        {
+                            test = true;
+                        }
+
+                        if (!test)
+                        {
+                            viewList.Add(new List<DS.Geometry>());
+                            continue;
+                        }
+
+                        DS.Cuboid elementCube = elementGeometries[j] as DS.Cuboid;
+                        // 3 - check if the cuboid is not null
+                        if (elementCube == null)
+                        {
+                            viewList.Add(new List<DS.Geometry>());
+                            continue;
+                        }
+
+                        IList<DS.Geometry> geometry = viewSolid.Intersect(elementCube);
+
+                        //if (geometry.Count > 0)
+                        //{
+                        //    viewList.Add(geometry);
+                        //}
+                        viewList.Add(geometry);
                     }
                     result.Add(viewList);
                 }
                 
                 RevitServices.Transactions.TransactionManager.Instance.TransactionTaskDone();
             }
-
+            
             return result;            
         }
     }
