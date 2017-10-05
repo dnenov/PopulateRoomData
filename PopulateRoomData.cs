@@ -9,105 +9,26 @@ using System.Collections.Generic;
 using System.Linq;
 using Proto = Revit.Elements;
 using DS = Autodesk.DesignScript.Geometry;
+using System.Text;
+using System.Globalization;
+
 namespace DynamoAecom
 {
     [Transaction(TransactionMode.Manual)]
-    public class PopulateRoomData
+    public class DesigntechViews
     {
-        internal PopulateRoomData()
+        internal DesigntechViews()
         {
 
         }
-        public static string Populate([DefaultArgument("{}")] IList rooms, 
-            [DefaultArgument("{}")] IList<IList> points, 
-            [DefaultArgument("{}")] IList elements,
-            [DefaultArgument("{}")] string parameter)
-        {
-            int iterations = rooms.Count * elements.Count;
-            int iteration = 0;
-
-            using (AdnRme.ProgressForm form = new AdnRme.ProgressForm("Clear parameter value.", "Processing {0} out of " + elements.Count.ToString() + " elements", elements.Count))
-            {
-                RevitServices.Transactions.TransactionManager.Instance.EnsureInTransaction(DocumentManager.Instance.CurrentUIDocument.Document);
-
-                foreach (var el in elements)
-                {
-                    Element element = ((Proto.Element)el).InternalElement;
-                    element.LookupParameter(parameter).Set("");
-                }
-
-                form.Increment();
-                iteration++;
-
-                RevitServices.Transactions.TransactionManager.Instance.TransactionTaskDone();
-            }
-
-            
-            using (AdnRme.ProgressForm form = new AdnRme.ProgressForm("Populating Room Data", "Processing {0} out of " + iterations.ToString() + " elements", iterations))
-            {
-                iteration = 0;
-                RevitServices.Transactions.TransactionManager.Instance.EnsureInTransaction(DocumentManager.Instance.CurrentUIDocument.Document);
-
-                for (int i = 0; i < elements.Count; i++)
-                {
-                    Element el = ((Proto.Element)elements[i]).InternalElement;
-                    Parameter param = el.LookupParameter(parameter);
-                    if (param == null)
-                    {
-                        continue;
-                    }
-                    foreach (var room in rooms)
-                    {                    
-                        if(form.getAbortFlag())
-                        {
-                            return "Aborted by user";
-                        }
-
-                        Autodesk.Revit.DB.Architecture.Room r = ((Proto.Element)room).InternalElement as Autodesk.Revit.DB.Architecture.Room;
-
-                        AssignRoom(r, el, points[i], param);
-
-                        form.Increment();
-                        iteration++;
-                    }
-                    if (param.AsString().Equals(""))
-                    {
-                        param.Set("n/a");
-                    }
-                }                    
-
-                RevitServices.Transactions.TransactionManager.Instance.TransactionTaskDone();
-            }
-            
-            return String.Format("{0} elements processed successfully.", iterations.ToString());
-        }
-        
-        private static void AssignRoom(Autodesk.Revit.DB.Architecture.Room room, Element element, IList points, Parameter parameter)
-        {            
-            foreach(var point in points)
-            {
-                if (room.IsPointInRoom(point as XYZ))
-                {
-                    string name = room.LookupParameter("Number").AsString() + " - " + room.LookupParameter("Name").AsString();
-                    if (!parameter.AsString().Equals(""))
-                    {
-                        name += ", " + parameter.AsString();
-                    }
-                    parameter.Set(name);
-                    return;
-                }
-            }            
-        }
-    }
-
-    [Transaction(TransactionMode.Manual)]
-    public class SortViewsBySize
-    {
-        internal SortViewsBySize()
-        {
-
-        }
-        public static List<List<View>> Sort([DefaultArgument("{}")] IList<IList> views,
+        /// <summary>
+        /// Sort Views on Sheets by Size
+        /// </summary>
+        /// <param name="views"></param>
+        /// <param name="width"></param>
+        /// <param name="height"></param>
+        /// <returns></returns>
+        public static List<List<View>> SortViewportsBySize([DefaultArgument("{}")] IList<IList> views,
             [DefaultArgument("{}")] int width,
             [DefaultArgument("{}")] int height)
         {
@@ -121,10 +42,11 @@ namespace DynamoAecom
                 RevitServices.Transactions.TransactionManager.Instance.EnsureInTransaction(DocumentManager.Instance.CurrentUIDocument.Document);
 
                 List<List<View>> outlines = new List<List<View>>();
-                List<View> view_set = new List<View>();
 
                 foreach (var el in views)
                 {
+                    List<View> view_set = new List<View>();
+
                     if (form.getAbortFlag())
                     {
                         return null;
@@ -132,33 +54,32 @@ namespace DynamoAecom
 
                     foreach (var e in el)
                     {
-
                         View v = e as ViewSection;
 
                         double w = (v.Outline.Max.U - v.Outline.Min.U) * feet;
                         double h = (v.Outline.Max.V - v.Outline.Min.V) * feet;
 
                         Parameter view_comment = v.get_Parameter(BuiltInParameter.VIEW_DESCRIPTION);
-
+                        
                         if ((w < wi / 2) && (h < he / 2))
                         {
-                            view_comment.Set('A');
+                            view_comment.Set("A");
                         }
                         else if ((w > wi / 2) && (w < wi) && (he < h / 4))
                         {
-                            view_comment.Set('B');
+                            view_comment.Set("B");
                         }
                         else if ((w > wi / 2) && (w < wi) && (he < h / 2))
                         {
-                            view_comment.Set('C');
+                            view_comment.Set("C");
                         }
                         else if ((w < wi) && (h < he))
                         {
-                            view_comment.Set('D');
+                            view_comment.Set("D");
                         }
                         else
                         {
-                            view_comment.Set('E');
+                            view_comment.Set("E");
                         }
 
                         view_set.Add(v);
@@ -168,24 +89,15 @@ namespace DynamoAecom
 
                     outlines.Add(view_set);
 
-
                     RevitServices.Transactions.TransactionManager.Instance.TransactionTaskDone();
                 }
 
                 return outlines;
             }
         }
-    }
-
-    [Transaction(TransactionMode.Manual)]
-    public class ElementsOnViews
-    {
-        internal ElementsOnViews()
-        {
-
-        }
+        #region TagElements
         [MultiReturn(new[] { "views", "points", "elements" })]
-        public static Dictionary<string, object> Intersect([DefaultArgument("{}")] IList elementGeometries,
+        public static Dictionary<string, object> ViewElementIntersect([DefaultArgument("{}")] IList elementGeometries,
             [DefaultArgument("{}")] IList<string> elementsNames,
             [DefaultArgument("{}")] IList<string> elementsText,
             [DefaultArgument("{}")] IList<DS.Solid> viewGeometries,
@@ -205,16 +117,16 @@ namespace DynamoAecom
                 TaskDialog.Show("Error", "Make sure you are passing matching lists.");
                 return null;
             }
-            
+
             using (AdnRme.ProgressForm form = new AdnRme.ProgressForm("Find elements on Views.", "Processing {0} out of " + (numElements * numSections).ToString() + " elements", (numElements * numSections)))
             {
                 RevitServices.Transactions.TransactionManager.Instance.EnsureInTransaction(DocumentManager.Instance.CurrentUIDocument.Document);
 
                 // FOR EACH VIEW
-                for(int i = 0;  i < numSections; i++)
+                for (int i = 0; i < numSections; i++)
                 {
                     string viewName = viewNames[i];
-                    DS.Solid viewSolid = viewGeometries[i];                 
+                    DS.Solid viewSolid = viewGeometries[i];
 
                     // FOR EACH ELEMENT
                     for (int j = 0; j < numElements; j++)
@@ -252,16 +164,21 @@ namespace DynamoAecom
 
                         if (geometry.Count > 0)
                         {
+                            DS.Point point = GetPoint(geometry);
+                            if(point == null)
+                            {
+                                continue;
+                            }
                             vNames.Add(viewSheets[i]);
-                            points.Add(GetPoint(geometry));
+                            points.Add(point);
                             eNames.Add(elementsText[j]);
                         }
                     }
                 }
-                
+
                 RevitServices.Transactions.TransactionManager.Instance.TransactionTaskDone();
             }
-            
+
             return new Dictionary<string, object>
                 {
                     { "views", vNames },
@@ -269,19 +186,215 @@ namespace DynamoAecom
                     { "elements", eNames }
                 };
         }
-
+        /// <summary>
+        /// Retrieves the center point from a DS.Geometry
+        /// </summary>
+        /// <param name="geometry"></param>
+        /// <returns></returns>
         private static DS.Point GetPoint(IList<DS.Geometry> geometry)
         {
-            if(geometry[0].ToString().Contains("Line"))
+            if (geometry[0].ToString().Contains("Line"))
             {
                 DS.Curve curve = geometry[0] as DS.Curve;
-                return curve.PointAtParameter(0.5);
+                if(curve != null)
+                {
+                    return curve.PointAtParameter(0.5);
+                }
+                else return null;
+            }
+            else if (geometry[0].ToString().Contains("Solid"))
+            {
+                DS.Solid solid = geometry[0] as DS.Solid;
+                if (solid != null)
+                {
+                    return solid.Centroid();
+                }
+                else return null;
             }
             else
             {
-                DS.Solid solid = geometry[0] as DS.Solid;
-                return solid.Centroid();
+                return null;
             }
         }
+#endregion
+
+        #region Views.PopulateRoomInformation 
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="rooms"></param>
+        /// <param name="points"></param>
+        /// <param name="elements"></param>
+        /// <param name="parameter"></param>
+        /// <returns></returns>
+        public static string PopulateElementRoomInformation([DefaultArgument("{}")] IList rooms,
+            [DefaultArgument("{}")] IList<IList> points,
+            [DefaultArgument("{}")] IList elements,
+            [DefaultArgument("{}")] string parameter)
+        {
+            int iterations = rooms.Count * elements.Count;
+            int iteration = 0;
+
+            using (AdnRme.ProgressForm form = new AdnRme.ProgressForm("Clear parameter value.", "Processing {0} out of " + elements.Count.ToString() + " elements", elements.Count))
+            {
+                RevitServices.Transactions.TransactionManager.Instance.EnsureInTransaction(DocumentManager.Instance.CurrentUIDocument.Document);
+
+                foreach (var el in elements)
+                {
+                    Element element = ((Proto.Element)el).InternalElement;
+                    element.LookupParameter(parameter).Set("");
+                }
+
+                form.Increment();
+                iteration++;
+
+                RevitServices.Transactions.TransactionManager.Instance.TransactionTaskDone();
+            }
+
+
+            using (AdnRme.ProgressForm form = new AdnRme.ProgressForm("Populating Room Data", "Processing {0} out of " + iterations.ToString() + " elements", iterations))
+            {
+                iteration = 0;
+                RevitServices.Transactions.TransactionManager.Instance.EnsureInTransaction(DocumentManager.Instance.CurrentUIDocument.Document);
+
+                for (int i = 0; i < elements.Count; i++)
+                {
+                    Element el = ((Proto.Element)elements[i]).InternalElement;
+                    Parameter param = el.LookupParameter(parameter);
+                    if (param == null)
+                    {
+                        continue;
+                    }
+                    foreach (var room in rooms)
+                    {
+                        if (form.getAbortFlag())
+                        {
+                            return "Aborted by user";
+                        }
+
+                        Autodesk.Revit.DB.Architecture.Room r = ((Proto.Element)room).InternalElement as Autodesk.Revit.DB.Architecture.Room;
+
+                        AssignRoom(r, el, points[i], param);
+
+                        form.Increment();
+                        iteration++;
+                    }
+                    if (param.AsString().Equals(""))
+                    {
+                        param.Set("n/a");
+                    }
+                }
+
+                RevitServices.Transactions.TransactionManager.Instance.TransactionTaskDone();
+            }
+
+            return String.Format("{0} elements processed successfully.", iterations.ToString());
+        }
+
+        private static void AssignRoom(Autodesk.Revit.DB.Architecture.Room room, Element element, IList points, Parameter parameter)
+        {
+            foreach (var point in points)
+            {
+                if (room.IsPointInRoom(point as XYZ))
+                {
+                    string name = room.LookupParameter("Number").AsString() + " - " + room.LookupParameter("Name").AsString();
+                    if (!parameter.AsString().Equals(""))
+                    {
+                        name += ", " + parameter.AsString();
+                    }
+                    parameter.Set(name);
+                    return;
+                }
+            }
+        }
+#endregion
     }
+
+
+    public class DesigntechString
+    {
+        internal DesigntechString()
+        {
+
+        }
+
+        #region String.AddLeadingZeros
+        /// <summary>
+        /// Takes an input of a series of numbers, finds the length of the maximum number and then adds leading zero’s to any numbers of less digits till all numbers in the list have the same digits.
+        /// 
+        /// As an example if you feed in the numbers 1, 10 and 1000, it will give you the results 0001, 0010, 1000. Lists can be in any order as it searches for the maximum item.
+        /// </summary>
+        /// <param name="numbers"></param>
+        /// <returns name="numbers">string</returns>
+        /// <search>string,add,leading,zeros,0</search>
+        public static List<string> AddLeadingZeros(List<int> numbers)
+        {
+            List<int> lengths = new List<int>();
+            foreach (int i in numbers)
+            {
+                string str = (System.Math.Abs(i)).ToString();
+                int len = str.Length;
+                lengths.Add(len);
+            }
+            int max = lengths.Max();
+
+            List<string> output = new List<string>();
+            foreach (int i in numbers)
+            {
+                string format = "D" + max.ToString();
+                output.Add(i.ToString(format));
+            }
+            return output;
+        }
+        #endregion
+
+        #region String.ContainsThisAndThat
+        /// <summary>
+        /// Returns true or false based on whether the string contains all the inputs (mulitple input as a list)
+        /// </summary>
+        /// <param name="str"></param>
+        /// <param name="searchFor"></param>
+        /// <param name="ignoreCase"></param>
+        /// <returns name="str">string</returns>
+        /// <search>string,contains,this,and,that,case,search</search>
+        public static object ContainsThisAndThat(string str, List<string> searchFor, bool ignoreCase = false)
+        {
+            int count = searchFor.Count();
+            var boolList = new List<bool>();
+            for (int i = 0; i < count; i++)
+            {
+                //bool contains = str.Contains(searchFor[i]);
+                bool contains = DSCore.String.Contains(str, searchFor[i], ignoreCase);
+                boolList.Add(contains);
+            }
+            bool alltrue = boolList.TrueForAll(b => b);
+            return alltrue;
+        }
+        #endregion
+
+        #region String.ContainsThisOrThat
+        /// <summary>
+        /// Returns true or false based on whether the string contains any of the inputs (mulitple input as a list)
+        /// </summary>
+        /// <param name="str"></param>
+        /// <param name="searchFor"></param>
+        /// <param name="ignoreCase"></param>
+        /// <returns name="str">string</returns>
+        /// <search>string,contains,this,or,that,case,search</search>
+        public static object ContainsThisOrThat(string str, List<string> searchFor, bool ignoreCase = false)
+        {
+            int count = searchFor.Count();
+            var boolList = new List<bool>();
+            for (int i = 0; i < count; i++)
+            {
+                //bool contains = str.Contains(searchFor[i]);
+                bool contains = DSCore.String.Contains(str, searchFor[i], ignoreCase);
+                boolList.Add(contains);
+            }
+            bool anyTrue = boolList.Any(b => b);
+            return anyTrue;
+        }
+        #endregion
+    }
+    
 }
